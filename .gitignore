@@ -32,7 +32,8 @@ Thumbs.db
 .env.local
 .env.*.local
 
-# Test screenshots
+# Test screenshots (keep README screenshot)
 *.jpg
 *.png
-!.gitkeep
+!timestamp-converter-ui.jpg
+!public/icons/*.png
