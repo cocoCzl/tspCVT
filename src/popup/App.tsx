@@ -1,12 +1,80 @@
-import { useState, useEffect } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import dayjs from 'dayjs'
 import 'dayjs/locale/zh-cn'
+import customParseFormat from 'dayjs/plugin/customParseFormat'
 import weekday from 'dayjs/plugin/weekday'
 
+dayjs.extend(customParseFormat)
 dayjs.extend(weekday)
 dayjs.locale('zh-cn')
 
-// Copy Icon Component
+const DATE_FORMAT = 'YYYY-MM-DD'
+const TIME_FORMAT = 'HH:mm:ss'
+const DATE_TIME_FORMAT = `${DATE_FORMAT} ${TIME_FORMAT}`
+const TIMESTAMP_PATTERN = /^(?:\d{10}|\d{13})$/
+const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/
+const TIME_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/
+
+type TimestampConversion = {
+  value: string
+  canCopy: boolean
+}
+
+const formatTimeZoneOffset = () => {
+  const offsetMinutes = -new Date().getTimezoneOffset()
+  const sign = offsetMinutes >= 0 ? '+' : '-'
+  const absOffset = Math.abs(offsetMinutes)
+  const hours = Math.floor(absOffset / 60).toString().padStart(2, '0')
+  const minutes = (absOffset % 60).toString().padStart(2, '0')
+
+  return `UTC${sign}${hours}:${minutes}`
+}
+
+const normalizeTime = (time: string) => (time.length === 5 ? `${time}:00` : time)
+
+const convertTimestampToDate = (rawInput: string): TimestampConversion => {
+  const input = rawInput.trim()
+
+  if (!input) {
+    return { value: '', canCopy: false }
+  }
+
+  if (!TIMESTAMP_PATTERN.test(input)) {
+    return { value: '请输入10位或13位数字时间戳', canCopy: false }
+  }
+
+  const numericTimestamp = Number(input)
+  const timestamp = input.length === 10 ? numericTimestamp * 1000 : numericTimestamp
+  const date = dayjs(timestamp)
+
+  if (!date.isValid()) {
+    return { value: '无效时间戳', canCopy: false }
+  }
+
+  return { value: date.format(DATE_TIME_FORMAT), canCopy: true }
+}
+
+const convertDateTimeToTimestamps = (date: string, time: string) => {
+  const normalizedTime = normalizeTime(time)
+
+  if (!DATE_PATTERN.test(date) || !TIME_PATTERN.test(normalizedTime)) {
+    return { timestamp10: '', timestamp13: '' }
+  }
+
+  const dateTime = dayjs(`${date} ${normalizedTime}`, DATE_TIME_FORMAT, true)
+
+  if (!dateTime.isValid()) {
+    return { timestamp10: '', timestamp13: '' }
+  }
+
+  const milliseconds = dateTime.valueOf()
+
+  return {
+    timestamp10: Math.floor(milliseconds / 1000).toString(),
+    timestamp13: milliseconds.toString(),
+  }
+}
+
 const CopyIcon = ({ copied }: { copied: boolean }) => (
   <svg 
     className={`w-4 h-4 transition-all duration-200 ${copied ? 'text-green-400' : 'text-gray-400 hover:text-white'}`} 
@@ -22,24 +90,44 @@ const CopyIcon = ({ copied }: { copied: boolean }) => (
   </svg>
 )
 
-// Copy Button Component
-const CopyButton = ({ text }: { text: string }) => {
+const CopyButton = ({ text, disabled = false }: { text: string; disabled?: boolean }) => {
   const [copied, setCopied] = useState(false)
+  const resetTimer = useRef<number | null>(null)
 
-  const handleCopy = async () => {
+  useEffect(() => {
+    return () => {
+      if (resetTimer.current) {
+        window.clearTimeout(resetTimer.current)
+      }
+    }
+  }, [])
+
+  const handleCopy = useCallback(async () => {
+    if (!text || disabled) {
+      return
+    }
+
     try {
       await navigator.clipboard.writeText(text)
       setCopied(true)
-      setTimeout(() => setCopied(false), 1500)
+
+      if (resetTimer.current) {
+        window.clearTimeout(resetTimer.current)
+      }
+
+      resetTimer.current = window.setTimeout(() => setCopied(false), 1500)
     } catch (err) {
       console.error('Failed to copy:', err)
     }
-  }
+  }, [disabled, text])
 
   return (
     <button 
+      type="button"
       onClick={handleCopy}
-      className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 transition-all duration-200 active:scale-95"
+      disabled={!text || disabled}
+      aria-label={copied ? '已复制' : '复制'}
+      className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 transition-all duration-200 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-white/5"
       title="复制"
     >
       <CopyIcon copied={copied} />
@@ -47,94 +135,53 @@ const CopyButton = ({ text }: { text: string }) => {
   )
 }
 
-function App() {
-  // Real-time timestamp
+const CurrentTimestampHeader = () => {
   const [currentTimestamp, setCurrentTimestamp] = useState(Date.now())
-  
-  // Timestamp to Date
-  const [timestampInput, setTimestampInput] = useState('')
-  const [convertedDate, setConvertedDate] = useState('')
-  
-  // Date to Timestamp
-  const [selectedDate, setSelectedDate] = useState(dayjs().format('YYYY-MM-DD'))
-  const [selectedTime, setSelectedTime] = useState(dayjs().format('HH:mm:ss'))
-  const [timestamp10, setTimestamp10] = useState('')
-  const [timestamp13, setTimestamp13] = useState('')
+  const timeZoneOffset = useMemo(formatTimeZoneOffset, [])
 
-  // Update real-time timestamp every 100ms
   useEffect(() => {
     const interval = setInterval(() => {
       setCurrentTimestamp(Date.now())
-    }, 100)
+    }, 250)
+
     return () => clearInterval(interval)
   }, [])
 
-  // Auto-detect and convert timestamp
-  useEffect(() => {
-    if (!timestampInput.trim()) {
-      setConvertedDate('')
-      return
-    }
+  return (
+    <header className="relative p-4 bg-black/30 backdrop-blur-sm border-b border-white/10">
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-xs text-purple-300/80 mb-1">当前时间戳</p>
+          <p className="font-mono text-lg font-semibold bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">
+            {currentTimestamp}
+          </p>
+        </div>
+        <CopyButton text={currentTimestamp.toString()} />
+      </div>
+      <p className="text-xs text-gray-400 mt-2">
+        {dayjs(currentTimestamp).format('YYYY-MM-DD dddd HH:mm:ss.SSS')} · {timeZoneOffset}
+      </p>
+    </header>
+  )
+}
 
-    const input = timestampInput.trim()
-    const num = parseInt(input, 10)
-    
-    if (isNaN(num)) {
-      setConvertedDate('无效输入')
-      return
-    }
-
-    let timestamp = num
-    // Auto-detect: if 10 digits, treat as seconds; if 13 digits, treat as milliseconds
-    if (input.length === 10) {
-      timestamp = num * 1000
-    } else if (input.length !== 13) {
-      setConvertedDate('请输入10位或13位时间戳')
-      return
-    }
-
-    const date = dayjs(timestamp)
-    if (!date.isValid()) {
-      setConvertedDate('无效时间戳')
-      return
-    }
-
-    setConvertedDate(date.format('YYYY-MM-DD HH:mm:ss'))
-  }, [timestampInput])
-
-  // Convert date to timestamp
-  useEffect(() => {
-    const dateTime = dayjs(`${selectedDate} ${selectedTime}`)
-    if (dateTime.isValid()) {
-      const ms = dateTime.valueOf()
-      setTimestamp13(ms.toString())
-      setTimestamp10(Math.floor(ms / 1000).toString())
-    }
-  }, [selectedDate, selectedTime])
+function App() {
+  const [timestampInput, setTimestampInput] = useState('')
+  const [selectedDate, setSelectedDate] = useState(() => dayjs().format(DATE_FORMAT))
+  const [selectedTime, setSelectedTime] = useState(() => dayjs().format(TIME_FORMAT))
+  const convertedDate = useMemo(() => convertTimestampToDate(timestampInput), [timestampInput])
+  const { timestamp10, timestamp13 } = useMemo(
+    () => convertDateTimeToTimestamps(selectedDate, selectedTime),
+    [selectedDate, selectedTime]
+  )
 
   return (
-    <div className="w-80 min-h-[480px] bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 text-white overflow-hidden">
-      {/* Animated background overlay */}
+    <div className="relative isolate w-80 min-h-[480px] bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 text-white overflow-hidden">
       <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-purple-600/20 via-transparent to-transparent pointer-events-none" />
-      
-      {/* Header - Real-time timestamp */}
-      <header className="relative p-4 bg-black/30 backdrop-blur-sm border-b border-white/10">
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-xs text-purple-300/80 mb-1">当前时间戳</p>
-            <p className="font-mono text-lg font-semibold bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">
-              {currentTimestamp}
-            </p>
-          </div>
-          <CopyButton text={currentTimestamp.toString()} />
-        </div>
-        <p className="text-xs text-gray-400 mt-2">
-          {dayjs(currentTimestamp).format('YYYY-MM-DD dddd HH:mm:ss.SSS')}
-        </p>
-      </header>
+
+      <CurrentTimestampHeader />
 
       <main className="relative p-4 space-y-5">
-        {/* Section A: Timestamp to Date */}
         <section className="space-y-3">
           <h2 className="text-sm font-medium text-purple-300 flex items-center gap-2">
             <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse" />
@@ -146,20 +193,20 @@ function App() {
               type="text"
               value={timestampInput}
               onChange={(e) => setTimestampInput(e.target.value)}
+              inputMode="numeric"
               placeholder="输入10位或13位时间戳..."
               className="w-full px-3 py-2.5 bg-white/5 border border-white/10 rounded-xl text-sm font-mono placeholder-gray-500 focus:outline-none focus:border-purple-500/50 focus:bg-white/10 transition-all duration-200"
             />
             
-            {convertedDate && (
+            {convertedDate.value && (
               <div className="flex items-center justify-between p-3 bg-gradient-to-r from-purple-500/10 to-pink-500/10 rounded-xl border border-purple-500/20">
-                <span className="font-mono text-sm">{convertedDate}</span>
-                <CopyButton text={convertedDate} />
+                <span className="font-mono text-sm">{convertedDate.value}</span>
+                <CopyButton text={convertedDate.value} disabled={!convertedDate.canCopy} />
               </div>
             )}
           </div>
         </section>
 
-        {/* Divider */}
         <div className="flex items-center gap-3">
           <div className="flex-1 h-px bg-gradient-to-r from-transparent via-purple-500/30 to-transparent" />
           <span className="text-xs text-gray-500">转换</span>
@@ -190,7 +237,6 @@ function App() {
           </div>
 
           <div className="space-y-2">
-            {/* 10-digit timestamp */}
             <div className="flex items-center justify-between p-3 bg-gradient-to-r from-blue-500/10 to-cyan-500/10 rounded-xl border border-blue-500/20">
               <div>
                 <span className="text-xs text-blue-300/80">10位 (秒)</span>
@@ -199,7 +245,6 @@ function App() {
               <CopyButton text={timestamp10} />
             </div>
             
-            {/* 13-digit timestamp */}
             <div className="flex items-center justify-between p-3 bg-gradient-to-r from-emerald-500/10 to-teal-500/10 rounded-xl border border-emerald-500/20">
               <div>
                 <span className="text-xs text-emerald-300/80">13位 (毫秒)</span>
@@ -210,7 +255,6 @@ function App() {
           </div>
         </section>
 
-        {/* Footer */}
         <footer className="pt-2 text-center">
           <p className="text-xs text-gray-500">
             tspCVT · 时间戳转换器

@@ -56,7 +56,7 @@ function createPNG(size) {
   ihdr.writeUInt32BE(size, 0)  // width
   ihdr.writeUInt32BE(size, 4)  // height
   ihdr.writeUInt8(8, 8)        // bit depth
-  ihdr.writeUInt8(2, 9)        // color type (RGB)
+  ihdr.writeUInt8(6, 9)        // color type (RGBA)
   ihdr.writeUInt8(0, 10)       // compression
   ihdr.writeUInt8(0, 11)       // filter
   ihdr.writeUInt8(0, 12)       // interlace
@@ -90,9 +90,9 @@ function createPNG(size) {
       )
       
       if (inCorner) {
-        rawData.push(0, 0, 0) // 透明背景（这里用黑色代替）
+        rawData.push(0, 0, 0, 0)
       } else {
-        rawData.push(r, g, b)
+        rawData.push(r, g, b, 255)
       }
     }
   }
